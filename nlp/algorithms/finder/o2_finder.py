@@ -116,38 +116,50 @@ import re
 import sys
 import json
 import argparse
-from pymongo import MongoClient
 from collections import namedtuple
 
-# try:
-#     #from . import finder_overlap as overlap
-#     import finder_overlap as overlap
-# except:
-#     from algorithms.finder import finder_overlap as overlap
+if __name__ == '__main__':
+    # interactive testing
+    match = re.search(r'nlp/', sys.path[0])
+    if match:
+        nlp_dir = sys.path[0][:match.end()]
+        sys.path.append(nlp_dir)
+    else:
+        print('\n*** o2_finder.py: nlp dir not found ***\n')
+        sys.exit(0)
+
+try:
+    import finder_overlap as overlap
+except:
+    from algorithms.finder import finder_overlap as overlap
 
 # default value for all fields
 EMPTY_FIELD = None
 
-O2_VALUE_FIELDS = [
+O2_TUPLE_FIELDS = [
     'text',
     'start',
     'end',
-    'spo2',
+    'o2_sat',
     'pao2',
-    'pf_ratio'
+    'fio2',
+    'p_to_f_ratio',
     'flow_rate',
-    'device'
+    'device',
+    'value',
+    'value2'
 ]
-O2Value = namedtuple('O2Value', O2_VALUE_FIELDS)
+O2Tuple = namedtuple('O2Tuple', O2_TUPLE_FIELDS)
 
 
 ###############################################################################
 
 _VERSION_MAJOR = 0
 _VERSION_MINOR = 1
+_MODULE_NAME   = 'o2_finder.py'
 
 # set to True to enable debug output
-_TRACE = False
+_TRACE = True
 
 
 #_str_connector = r'\s?([-/:=\s]|of|on)\s?'
@@ -161,13 +173,13 @@ _str_o2_sat_hdr = r'\b(spo2|sao2|pox|so2|(o2|oxygen)[-\s]?saturation|'       +\
 _str_units = r'\(?(percent|pct\.?|%|cmH2O|mmHg)\)?'
 
 # o2 saturation value
-_str_o2_val_range = r'\b(was|from)?\s?(?P<val1>\d+)(\s?' + _str_units + r')?'+\
+_str_o2_val_range = r'\b(was|from)?\s?(?P<val1>\d+)(\s?' + _str_units + r')?' +\
     r'(\s?(\-|to)\s?)(?P<val2>\d+)(\s?' + _str_units + r')?'
-_str_o2_value = r'(?P<value>\d+)(\s?' + _str_units + r')?'
+_str_o2_value = r'(?P<val>\d+)(\s?' + _str_units + r')?'
 _str_o2_val = r'(' + _str_o2_val_range + r'|' + _str_o2_value + r')'
 
 # O2 flow rate in L/min
-_str_flow_rate = r'\d+\s?(Liters|L)(/min\.?)?'
+_str_flow_rate = r'(?P<flow_rate>\d+)\s?(Liters|L)(/min\.?)?'
 
 # devices and related acronyms
 #         RA : radial artery, right atrial
@@ -290,21 +302,102 @@ def run(sentence):
     on all values extracted or computed.
     """
 
+    results    = [] # O2Tuple results
+    candidates = [] # candidate matches, need overlap resolution to confirm
+    
     cleaned_sentence = _cleanup(sentence)
 
     for i, regex in enumerate(_REGEXES):
-        match = regex.search(cleaned_sentence)
-        if match:
-            match_text = match.group()
-            print('\t[{0}]: {1}'.format(i, match_text))
-    
-    # match = _regex_pulse_ox.search(cleaned_sentence)
-    # if match:
-    #     print('\t{0}'.format(match.group()))
+        iterator = regex.finditer(cleaned_sentence)
+        for match in iterator:
+            match_text = match.group()#.strip()
+            start = match.start()
+            end   = start + len(match_text)
+            candidates.append(overlap.Candidate(start, end, match_text, regex))
+            if _TRACE:
+                print('[{0:2}]: [{1:3}, {2:3})\tMATCH TEXT: ->{3}<-'.
+                      format(i, start, end, match_text))
 
-    # match = _regex_flow.search(cleaned_sentence)
-    # if match:
-    #     print('\t{0}'.format(match.group()))
+
+    # sort the candidates in descending order of length, which is needed for
+    # one-pass overlap resolution later on
+    candidates = sorted(candidates, key=lambda x: x.end-x.start, reverse=True)
+
+    if _TRACE:
+        print('\tCandidate matches: ')
+        index = 0
+        for c in candidates:
+            print('\t[{0:2}]\t[{1},{2}): {3}'.
+                  format(index, c.start, c.end, c.match_text, c.regex))
+            index += 1
+        print()
+
+    pruned_candidates = overlap.remove_overlap(candidates, _TRACE)
+
+    if _TRACE:
+        print('\tcandidates count after overlap removal: {0}'.
+              format(len(pruned_candidates)))
+        print('\tPruned candidates: ')
+        for c in pruned_candidates:
+            print('\t\t[{0},{1}): {2}'.format(c.start, c.end, c.match_text))
+        print()
+
+    if _TRACE:
+        print('Extracting data from pruned candidates...')
+
+    for pc in pruned_candidates:
+        print(pc)
+        match = pc.regex.search( cleaned_sentence[pc.start-3:pc.end+3] )
+        assert match
+                
+        o2_sat       = EMPTY_FIELD
+        pao2         = EMPTY_FIELD
+        fio2         = EMPTY_FIELD
+        p_to_f_ratio = EMPTY_FIELD
+        flow_rate    = EMPTY_FIELD
+        device       = EMPTY_FIELD
+        value        = EMPTY_FIELD
+        value2       = EMPTY_FIELD
+
+        for k,v in match.groupdict().items():
+            if v is None:
+                continue
+            if 'val1' == k or 'val' == k:
+                value = float(v)
+                o2_sat = value
+            elif 'val2' == k:
+                value2 = float(v)
+            elif 'device' == k:
+                device = v
+            elif 'flow_rate' == k:
+                flow_rate = float(v)
+            elif 'p_to_f_ratio' == k:
+                p_to_f_ratio = float(v)
+            elif 'pao2' == k:
+                pao2 = float(v)
+            elif 'fio2' == k:
+                fio2 = float(v)
+
+        o2_tuple = O2Tuple(
+            text = pc.match_text,
+            start = pc.start,
+            end = pc.end,
+            o2_sat = o2_sat,
+            pao2 = pao2,
+            fio2 = fio2,
+            p_to_f_ratio = p_to_f_ratio,
+            flow_rate = flow_rate,
+            device = device,
+            value = value,
+            value2 = value2
+        )
+        results.append(o2_tuple)
+
+    # sort results to match order of occurrence in sentence
+    results = sorted(results, key=lambda x: x.start)
+
+    # convert to list of dicts to preserve field names in JSON output
+    return json.dumps([r._asdict() for r in results], indent=4)
     
 
 ###############################################################################
@@ -398,5 +491,25 @@ if __name__ == '__main__':
     for i, sentence in enumerate(SENTENCES):
         print('[{0:2d}]: {1}'.format(i, sentence))
         result = run(sentence)
+        #print(result)
+
+        data = json.loads(result)
+        for d in data:
+            for k,v in d.items():
+                print('\t\t{0} => {1}'.format(k, v))
+            
+        
+        # print('\t      o2_sat: {0}'.format(o2_sat))
+        # print('\t        pao2: {0}'.format(pao2))
+        # print('\t        fio2: {0}'.format(fio2))
+        # print('\tp_to_f_ratio: {0}'.format(p_to_f_ratio))
+        # print('\t   flow rate: {0}'.format(flow_rate))
+        # print('\t      device: {0}'.format(device))
+        # print('\t       value: {0}'.format(value))
+        # print('\t      value2: {0}'.format(value2))
+
 
     
+###############################################################################
+def get_version():
+    return '{0} {1}.{2}'.format(_MODULE_NAME, _VERSION_MAJOR, _VERSION_MINOR)
