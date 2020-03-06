@@ -610,6 +610,9 @@ def run(sentence):
         # compute estimated FiO2 from flow rate and device
         if EMPTY_FIELD == fio2 and device is not None:
             device, fio2_est = _estimate_fio2(flow_rate, device)
+
+        if pao2_est != EMPTY_FIELD and fio2_est != EMPTY_FIELD:
+            p_to_f_ratio_est = pao2_est / (0.01 * fio2_est)
                 
         o2_tuple = O2Tuple(
             text = pc.match_text,
