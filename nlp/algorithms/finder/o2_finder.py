@@ -147,7 +147,9 @@ O2_TUPLE_FIELDS = [
     'flow_rate',
     'device',
     'value',
-    'value2'
+    'value2',
+
+    # computed fields - TBD
 ]
 O2Tuple = namedtuple('O2Tuple', O2_TUPLE_FIELDS)
 
@@ -159,7 +161,7 @@ _VERSION_MINOR = 1
 _MODULE_NAME   = 'o2_finder.py'
 
 # set to True to enable debug output
-_TRACE = True
+_TRACE = False
 
 
 #_str_connector = r'\s?([-/:=\s]|of|on)\s?'
@@ -168,13 +170,15 @@ _str_connector = r'([-/:=\s]|of|on a|on|to|with)+'
 # O2 saturation header
 _str_o2_sat_hdr = r'\b(spo2|sao2|pox|so2|(o2|oxygen)[-\s]?saturation|'       +\
     r'o2[-\s]sat\.?s?|satting|o2sats?|sat\.?s?|pulse ox|o2|'                 +\
-    r'desatt?ing|desat)%?'
+    r'desatt?ing|desat\.?)%?'
 
 _str_units = r'\(?(percent|pct\.?|%|cmH2O|mmHg)\)?'
 
 # o2 saturation value
 _str_o2_val_range = r'\b(was|from)?\s?(?P<val1>\d+)(\s?' + _str_units + r')?' +\
     r'(\s?(\-|to)\s?)(?P<val2>\d+)(\s?' + _str_units + r')?'
+_regex_o2_val_range = re.compile(_str_o2_val_range, re.IGNORECASE)
+
 _str_o2_value = r'(?P<val>\d+)(\s?' + _str_units + r')?'
 _str_o2_val = r'(' + _str_o2_val_range + r'|' + _str_o2_value + r')'
 
@@ -196,11 +200,6 @@ _str_device = r'\(?(nc|nrb|bvm|ra|fm|room air|air|nasal\s?cannula|'          +\
     r'vent(ilator)?|\d+%\s?[a-z]+[-\s]?mask|\d+%\s[a-z]+[-\s]?tent|'         +\
     r'bipap\s\d+/\d+\s?(with\s\d+L|\d+%))\)?'
 
-# finds 98% RA" and similar (value to the left)
-_str_o2_0 = r'(?<![-:=/])(?<=\s)' + _str_o2_val + r'(' + _str_connector + r')?' +\
-    r'(?P<device>' + _str_device +r')'
-_regex_o2_0 = re.compile(_str_o2_0, re.IGNORECASE)
-
 # finds "spo2: 98% on 2L NC" and similar
 _str_o2_1 = _str_o2_sat_hdr + r'(' + _str_connector + r')?' + _str_o2_val    +\
     r'(' + _str_connector + r')?' + _str_flow_rate                           +\
@@ -221,57 +220,33 @@ _regex_o2_3 = re.compile(_str_o2_3, re.IGNORECASE)
 _str_o2_4 = _str_o2_sat_hdr + r'(' + _str_connector + r')?' + _str_o2_val
 _regex_o2_4 = re.compile(_str_o2_4, re.IGNORECASE)
 
-_REGEXES = [
-    _regex_o2_0,
+# finds 98% RA" and similar (value to the left)
+_str_o2_5 = r'(?<![-:=/])(?<=\s)' + _str_o2_val + r'(' + _str_connector + r')?' +\
+    r'(?P<device>' + _str_device +r')'
+_regex_o2_5 = re.compile(_str_o2_5, re.IGNORECASE)
+
+_SAO2_REGEXES = [
     _regex_o2_1,
     _regex_o2_2,
     _regex_o2_3,
-    _regex_o2_4
+    _regex_o2_4,
+    _regex_o2_5,
 ]
 
-# # o2 partial pressure
-# _str_pao2 = r'\b(pao2|partial pressure of (oxygen|o2))'
+# o2 partial pressure
+_str_pao2 = r'\b(pao2|partial pressure of (oxygen|o2))' +\
+    r'(' + _str_connector + r')?' +  _str_o2_val
+_regex_pao2 = re.compile(_str_pao2, re.IGNORECASE)
 
-# # fraction of inspired oxygen
-# _str_fio2 = r'\bfio2'
+# fraction of inspired oxygen
+_str_fio2 = r'\bfio2' +\
+    r'(' + _str_connector + r')?' + _str_o2_val
+_regex_fio2 = re.compile(_str_fio2, re.IGNORECASE)
 
-
-
-# connector of O2 sat to device:
-#     on or symbol
-# flow rate:
-#     \dL or \dL/min
-# device:
-#     \d\d%\s[a-z]+(-\s)?mask
-
-# on \dL(/min)? device
-# \dLdevice
-
-# on device
-# on 55% [a-z]+(-\s)?mask
-# /device
-# device
-# \dL and no device
-
-
-# # O2 flow rates and percentages for devices
-# _str_flow_rate = r'(' + _str_connector + r')' + r'\d\s?(l|L)' +\
-#     _str_connector + r'(' + _str_device + r')?'
-# _regex_flow = re.compile(_str_flow_rate, re.IGNORECASE)
-
-
-
-# _str_pulse_ox_1 = _str_spo2 + r'(' + _str_connector + r')?' + r'\d+' +\
-#     r'(' + _str_units + r'\s?)?' + r'(on\s?|[-/:=\s])?'              +\
-#     r'(\d+\s?(liters|l)\s?)?' + r'(' + _str_connector + r')?'        +\
-#     r'(' + _str_device + r')?'
-
-# _str_pulse_ox_2 = _str_spo2 + r'%(' + _str_connector + r')' +\
-#     r'\d+(' + _str_connector + r')' + _str_device
-
-# _str_pulse_ox = r'(' + _str_pulse_ox_1 + r'|' + _str_pulse_ox_2 + r')'
-# _regex_pulse_ox = re.compile(_str_pulse_ox, re.IGNORECASE)
-
+# p/f ratio
+_str_pf_ratio = r'\b(pao2|p)\s?/\s?(fio2|f)(\s?ratio)?' +\
+    r'(' + _str_connector + r')?' + _str_o2_val
+_regex_pf_ratio = re.compile(_str_pf_ratio, re.IGNORECASE)
 
 
 ###############################################################################
@@ -293,32 +268,49 @@ def _cleanup(sentence):
 
     return sentence
 
-    
+
 ###############################################################################
-def run(sentence):
+def _extract_values(match_obj):
     """
-    Find values related to oxygen saturation, flow rates, etc. Compute values
-    such as P/F ratio when possible. Returns a JSON array containing info
-    on all values extracted or computed.
+    Find the 'val', 'val1', and 'val2' groups from the matchobj groupdict.
     """
 
-    results    = [] # O2Tuple results
-    candidates = [] # candidate matches, need overlap resolution to confirm
+    val1 = None
+    val2 = None
+    for k,v in match_obj.groupdict().items():
+        if v is None:
+            continue
+        if 'val' == k or 'val1' == k:
+            val1 = float(v)
+        elif 'val2' == k:
+            val2 = float(v)
+
+    return (val1, val2)
     
-    cleaned_sentence = _cleanup(sentence)
 
-    for i, regex in enumerate(_REGEXES):
-        iterator = regex.finditer(cleaned_sentence)
-        for match in iterator:
-            match_text = match.group()#.strip()
+###############################################################################
+def _regex_match(sentence, regex_list):
+    """
+    """
+    
+    candidates = []
+    for i, regex in enumerate(regex_list):
+        #iterator = regex.finditer(sentence)
+        #for match in iterator:
+        match = regex.search(sentence)
+        if match:
+            match_text = match.group().strip()
             start = match.start()
             end   = start + len(match_text)
-            candidates.append(overlap.Candidate(start, end, match_text, regex))
+            candidates.append(overlap.Candidate(start, end, match_text, regex,
+                                                other=match))
             if _TRACE:
                 print('[{0:2}]: [{1:3}, {2:3})\tMATCH TEXT: ->{3}<-'.
                       format(i, start, end, match_text))
 
-
+    if 0 == len(candidates):
+        return []
+                
     # sort the candidates in descending order of length, which is needed for
     # one-pass overlap resolution later on
     candidates = sorted(candidates, key=lambda x: x.end-x.start, reverse=True)
@@ -335,25 +327,62 @@ def run(sentence):
     pruned_candidates = overlap.remove_overlap(candidates, _TRACE)
 
     if _TRACE:
-        print('\tcandidates count after overlap removal: {0}'.
+        print('\tcandidate count after overlap removal: {0}'.
               format(len(pruned_candidates)))
         print('\tPruned candidates: ')
         for c in pruned_candidates:
             print('\t\t[{0},{1}): {2}'.format(c.start, c.end, c.match_text))
         print()
 
+    return pruned_candidates
+    
+
+###############################################################################
+def run(sentence):
+    """
+    Find values related to oxygen saturation, flow rates, etc. Compute values
+    such as P/F ratio when possible. Returns a JSON array containing info
+    on all values extracted or computed.
+    """
+
+    results = []
+    cleaned_sentence = _cleanup(sentence)
+
+    # could have ovelapping SaO2 matches
+    sao2_candidates = _regex_match(cleaned_sentence, _SAO2_REGEXES)
+
+    # only a single match for pao2, fio2, p_to_f_ratio
+    
+    pao2 = EMPTY_FIELD
+    pao2_candidates = _regex_match(cleaned_sentence, [_regex_pao2])
+    if len(pao2_candidates) > 0:
+        assert 1 == len(pao2_candidates)
+        match_obj = pao2_candidates[0].other
+        pao2, pao2_2 = _extract_values(match_obj)
+
+    fio2 = EMPTY_FIELD
+    fio2_candidates = _regex_match(cleaned_sentence, [_regex_fio2])
+    if len(fio2_candidates) > 0:
+        assert 1 == len(fio2_candidates)
+        match_obj = fio2_candidates[0].other
+        fio2, fio2_2 = _extract_values(match_obj)
+
+    p_to_f_ratio = EMPTY_FIELD
+    pf_candidates = _regex_match(cleaned_sentence, [_regex_pf_ratio])
+    if len(pf_candidates) > 0:
+        assert 1 == len(pf_candidates)
+        match_obj = pf_candidates[0].other
+        p_to_f_ratio, p_to_f_ratio_2 = _extract_values(match_obj)
+
     if _TRACE:
         print('Extracting data from pruned candidates...')
 
-    for pc in pruned_candidates:
-        print(pc)
-        match = pc.regex.search( cleaned_sentence[pc.start-3:pc.end+3] )
-        assert match
+    for pc in sao2_candidates:
+        # recover the regex match object from the 'other' field
+        match = pc.other
+        assert match is not None
                 
         o2_sat       = EMPTY_FIELD
-        pao2         = EMPTY_FIELD
-        fio2         = EMPTY_FIELD
-        p_to_f_ratio = EMPTY_FIELD
         flow_rate    = EMPTY_FIELD
         device       = EMPTY_FIELD
         value        = EMPTY_FIELD
@@ -371,12 +400,6 @@ def run(sentence):
                 device = v
             elif 'flow_rate' == k:
                 flow_rate = float(v)
-            elif 'p_to_f_ratio' == k:
-                p_to_f_ratio = float(v)
-            elif 'pao2' == k:
-                pao2 = float(v)
-            elif 'fio2' == k:
-                fio2 = float(v)
 
         o2_tuple = O2Tuple(
             text = pc.match_text,
@@ -445,23 +468,19 @@ if __name__ == '__main__':
         "Vitals as follows: BP 120/80 HR 60-80's RR  SaO2 96% 6L NC.",
         'Vital signs were T 97.5 HR 62 BP 168/60 RR 18 95% RA.',
         'T 99.4 P 160 R 56 BP 60/36 mean 44 O2 sat 97% Wt 3025 grams ',
-        'Vital signs were T 97.0 BP 85/44 HR 107 RR 28 and SpO2 91% on NRB.',
-        'Vitals were T 95.6 HR 67 BP 143/79 RR 16 and O2 sat 92% on room air and 100% on 3 L/min nc',
-        'Vitals were Temp. 100.8 Pulse: 103 RR: 28 BP: 84/43 O2Sat: 88 O2 Flow: 100 (Non-Rebreather).',
+        'HR 107 RR 28 and SpO2 91% on NRB.',
+        'BP 143/79 RR 16 and O2 sat 92% on room air and 100% on 3 L/min nc',
+        'RR: 28 BP: 84/43 O2Sat: 88 O2 Flow: 100 (Non-Rebreather).',
         'Vitals were T 97.1 HR 76 BP 148/80 RR 25 SpO2 92%/RA.',
         'Tm 96.4, BP= 90-109/49-82, HR= paced at 70, RR= 24, O2 sat= 96% on 4L',
         'Vitals were T 97.1 BP 80/70 AR 80 RR 24 O2 sat 70% on 50% flowmask',
-        'Vitals: T: 98.9 degrees Farenheit BP: 120/49 mmHg supine ' +\
         'HR 84 bpm RR 13 bpm O2: 100% PS 18/10 FiO2 40%',
-        'Vitals T 99.2 (baseline ~96-97), BP 91/50, HR 63, RR 12, ' +\
-        'satting 95% on trach mask',
+        'BP 91/50, HR 63, RR 12, satting 95% on trach mask',
         'O2 sats 98-100%',
         'Pt. desating to 88%',
         "O2 sats increasing back up to low to mid 90's on Bipap",
         'spo2 difficult to monitor but appeared to remain ~ 96-100% on bipap 8/5',
         'using BVM w/ o2 sats 74%',
-        'Placed on BiPAP 10/5 with 100% FiO2',
-        'Continues to need bipap 12/10 with 10L bleed in',
         'desat to 83 with 100% face tent and 4 l n.c.',
 
         'Ventilator mode: CMV/ASSIST/AutoFlow   Vt (Set): 550 (550 - 550) mL ' +\
