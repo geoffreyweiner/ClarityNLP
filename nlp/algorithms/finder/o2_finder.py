@@ -140,11 +140,14 @@ O2_TUPLE_FIELDS = [
     'text',
     'start',
     'end',
-    'o2_sat',
-    'pao2',
-    'fio2',
+    'o2_sat',           # [%]
+    'pao2',             # [mmHg]
+    'pao2_est',         # estimated from o2_sat
+    'fio2',             # [%]
+    'fio2_est',         # estimated from flow_rate
     'p_to_f_ratio',
-    'flow_rate',
+    'p_to_f_ratio_est', # estimated
+    'flow_rate',        # [L/min]
     'device',
     'value',
     'value2',
@@ -172,7 +175,7 @@ _str_o2_sat_hdr = r'\b(spo2|sao2|pox|so2|(o2|oxygen)[-\s]?saturation|'       +\
     r'o2[-\s]sat\.?s?|satting|o2sats?|sat\.?s?|pulse ox|o2|'                 +\
     r'desatt?ing|desat\.?)%?'
 
-_str_units = r'\(?(percent|pct\.?|%|cmH2O|mmHg)\)?'
+_str_units = r'\(?(percent|pct\.?|%|mmHg)\)?'
 
 # o2 saturation value
 _str_o2_val_range = r'\b(was|from)?\s?(?P<val1>\d+)(\s?' + _str_units + r')?' +\
@@ -191,10 +194,6 @@ _str_flow_rate = r'(?P<flow_rate>\d+)\s?(Liters|L)(/min\.?)?'
 #        BVM : bag valve mask
 #  venti mask: Venturi mask
 #       bipap: bilevel positive airway pressure
-# _str_device = r'\(?(bipap|non[-\s]?rebreather(\smask)?|nasal\s?cannula|'     +\
-#     r'room air|([a-z]+)?(-|\s)?mask|cannula|psv|nrb|ra|fm|nc|air|bvm|'       +\
-#     r'rebreather(\smask)?|on\svent(ilator)?)\)?'
-
 _str_device = r'\(?(nc|nrb|bvm|ra|fm|room air|air|nasal\s?cannula|'          +\
     r'cannula|non[-\s]?rebreather(\smask)?|[a-z\s]+[-\s]?mask|mask|'         +\
     r'vent(ilator)?|\d+%\s?[a-z]+[-\s]?mask|\d+%\s[a-z]+[-\s]?tent|'         +\
@@ -249,6 +248,31 @@ _str_pf_ratio = r'\b(pao2|p)\s?/\s?(fio2|f)(\s?ratio)?' +\
 _regex_pf_ratio = re.compile(_str_pf_ratio, re.IGNORECASE)
 
 
+# convert SpO2 to PaO2
+_SPO2_TO_PAO2 = {
+    80:44,
+    81:45,
+    82:46,
+    83:47,
+    84:49,
+    85:50,
+    86:52,
+    87:53,
+    88:55,
+    89:57,
+    90:60,
+    91:62,
+    92:65,
+    93:69,
+    94:73,
+    95:79,
+    96:86,
+    97:96,
+    98:112,
+    99:145
+}
+
+
 ###############################################################################
 def _enable_debug():
 
@@ -267,6 +291,43 @@ def _cleanup(sentence):
     sentence = re.sub(r'\s+', r' ', sentence)
 
     return sentence
+
+
+###############################################################################
+def _estimate_fio2(flow_rate, device):
+    """
+    Estimate the FiO2 value (fraction of inspired oxygen, as a percentage)
+    from the given flow rate in L/min and device.
+    """
+
+    pass
+    
+
+###############################################################################
+def _estimate_pao2(spo2):
+    """
+    Return a PaO2 estimate in mmHg from a given SpO2 percentage.
+    The estimate is computed by linear piecewise approximation.
+    """
+
+    p = None
+    if spo2 >= 99:
+        p = 145
+    elif spo2 <= 80:
+        p = 44
+    else:
+        for s0 in range(80, 99):
+            # find known bounds on the SpO2 value, then linearly interpolate
+            if spo2 >= s0 and spo2 < (s0 + 1.0):
+                p0 = _SPO2_TO_PAO2[s0]
+                p1 = _SPO2_TO_PAO2[s0+1]
+                # slope m = delta_p/delta_s
+                m = (p1 - p0) # denom == (s0+1 - s0) == 1
+                p = p0 + m * (spo2 - s0)
+                break
+
+    assert p is not None
+    return p
 
 
 ###############################################################################
@@ -366,6 +427,9 @@ def run(sentence):
         assert 1 == len(fio2_candidates)
         match_obj = fio2_candidates[0].other
         fio2, fio2_2 = _extract_values(match_obj)
+        # convert fio2 to a percentage
+        if fio2 < 1.0:
+            fio2 *= 100.0
 
     p_to_f_ratio = EMPTY_FIELD
     pf_candidates = _regex_match(cleaned_sentence, [_regex_pf_ratio])
@@ -388,6 +452,10 @@ def run(sentence):
         value        = EMPTY_FIELD
         value2       = EMPTY_FIELD
 
+        pao2_est         = EMPTY_FIELD
+        fio2_est         = EMPTY_FIELD
+        p_to_f_ratio_est = EMPTY_FIELD
+
         for k,v in match.groupdict().items():
             if v is None:
                 continue
@@ -401,6 +469,15 @@ def run(sentence):
             elif 'flow_rate' == k:
                 flow_rate = float(v)
 
+        # compute estimated PaO2 from SpO2
+        if EMPTY_FIELD == pao2:
+            pao2_est = _estimate_pao2(o2_sat)
+
+        # compute estimated FiO2 from flow rate and device
+        if EMPTY_FIELD == fio2:
+            fio2_est = _estimate_fio2(flow_rate, device)
+        
+                
         o2_tuple = O2Tuple(
             text = pc.match_text,
             start = pc.start,
@@ -412,7 +489,10 @@ def run(sentence):
             flow_rate = flow_rate,
             device = device,
             value = value,
-            value2 = value2
+            value2 = value2,
+            pao2_est = pao2_est,
+            fio2_est = fio2_est,
+            p_to_f_ratio_est = p_to_f_ratio_est
         )
         results.append(o2_tuple)
 
