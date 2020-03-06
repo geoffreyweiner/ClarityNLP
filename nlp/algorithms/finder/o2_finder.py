@@ -43,7 +43,7 @@ The FiO2 percentage can be estimated from O2 flow rates of different breathing
 devices. Normal breathing in room air produces an FiO2 value of 20%.
 
 For a nasal cannula, each L/min of O2 adds 4% to the FiO2 value:
-FiO2 = 0.2 + (0.04) * flow_rate_l_per_min, 1 <= flow_rate <= 10
+FiO2 = 0.2 + (0.04) * (flow_rate_l_per_min-1), 1 <= flow_rate <= 10
 
 
        flow rate (L/min)    FiO2 (%)
@@ -60,7 +60,7 @@ FiO2 = 0.2 + (0.04) * flow_rate_l_per_min, 1 <= flow_rate <= 10
           10                  60
 
 For a nasopharyngeal catheter:
-FiO2 = (0.1) * flow_rate_l_per_min, 4 <= flow_rate <= 6
+FiO2 = (0.4) * (0.1)*(flow_rate_l_per_min-4), 4 <= flow_rate <= 6
 
        flow rate (L/min)    FiO2 (%)
        ----------------     --------
@@ -194,10 +194,116 @@ _str_flow_rate = r'(?P<flow_rate>\d+)\s?(Liters|L)(/min\.?)?'
 #        BVM : bag valve mask
 #  venti mask: Venturi mask
 #       bipap: bilevel positive airway pressure
-_str_device = r'\(?(nc|nrb|bvm|ra|fm|room air|air|nasal\s?cannula|'          +\
-    r'cannula|non[-\s]?rebreather(\smask)?|[a-z\s]+[-\s]?mask|mask|'         +\
-    r'vent(ilator)?|\d+%\s?[a-z]+[-\s]?mask|\d+%\s[a-z]+[-\s]?tent|'         +\
-    r'bipap\s\d+/\d+\s?(with\s\d+L|\d+%))\)?'
+_str_device_nc  = r'(?P<nc>(nc|nasal[-\s]?cannula|cannula))'
+_str_device_nrb = r'(?P<nrb>(nrb|(\d+%\s)?non[-\s]?rebreather(\smask)?))'
+_str_device_ra  = r'(?P<ra>(ra|radial[-\s]?artery))'
+_str_device_venturi = r'(?P<venturi>((venturi|venti)[-\s]?mask))'
+_str_device_bvm = r'(?P<bvm>(bvm|bag[-\s]valve\smask))'
+_str_device_bipap = r'(?P<bipap>(bipap\s\d+/\d+\s?(with\s\d+L|\d+%)|bipap))'
+_str_device_mask = r'(?P<mask>(fm|[a-z\s]+[-\s]?mask|' +\
+    r'vent(ilator)?|\d+%\s?[a-z]+[-\s]?mask|\d+%\s[a-z]+[-\s]?tent|mask))'
+_str_device_air = r'(?P<air>(ra|room[-\s]air|air))'
+_str_device_nasocath = r'(?P<nasocath>(naso\.?(pharyngeal)?[-\s]?cath\.?(eter)?|' +\
+    r'cath\.?(eter)?))'
+
+##### Functions to convert an O2 flow rate into an estimated FiO2 value. #####
+
+def _to_fio2_nc(flow_rate_l_min):
+    """
+    Convert an O2 flow rate to an estimated FiO2 value for a nasal cannula.
+    Return FiO2 as a percentage.
+    """
+
+    fio2_est = EMPTY_FIELD
+    if flow_rate_l_min >= 1 and flow_rate_l_min <= 10:
+        fio2_est = 24 + 4*(flow_rate_l_min - 1)
+    return fio2_est
+
+def _to_fio2_nrb(flow_rate_l_min):
+    """
+    Convert an O2 flow rate to an estimated FiO2 value for a non-rebreather mask.
+    Return FiO2 as a percentage.
+    """
+
+    fio2_est = EMPTY_FIELD
+    if flow_rate_l_min >= 6 and flow_rate_l_min < 9:
+        fio2_est = 60 + 10 * (flow_rate_l_min - 6)
+    elif flow_rate_l_min >= 9 and flow_rate_l_min <= 10:
+        fio2_est = 90 + 5 * (flow_rate_l_min - 9)
+    return fio2_est
+
+def _to_fio2_venturi(flow_rate_l_min):
+    """
+    Convert an O2 flow rate to an estimated FiO2 value for a venturi mask.
+    Return FiO2 as a percentage.
+    """
+
+    fio2_est = EMPTY_FIELD
+    if flow_rate_l_min >=2 and flow_rate_l_min < 4:
+        fio2_est = 24 + 2*(flow_rate_l_min - 2)
+    elif flow_rate_l_min >= 4 and flow_rate_l_min < 6:
+        fio2_est = 28 + 1.5*(flow_rate_l_min - 4)
+    elif flow_rate_l_min >= 6 and flow_rate_l_min < 8:
+        fio2_est = 31 + 2 * (flow_rate_l_min - 6)
+    elif flow_rate_l_min >= 8 and flow_rate_l_min < 10:
+        fio2_est = 35 + 2.5 * (flow_rate_l_min - 8)
+    elif flow_rate_l_min >= 10 and flow_rate_l_min <= 15:
+        fio2_est = 40 + 4 * (flow_rate_l_min - 10)
+    return fio2_est
+
+def _to_fio2_mask(flow_rate_l_min):
+    """
+    Convert an O2 flow rate to an estimated FiO2 value for a rebreather mask.
+    Return FiO2 as a percentage.
+    """
+
+    fio2_est = EMPTY_FIELD
+    if flow_rate_l_min >= 5 and flow_rate_l_min <= 10:
+        return 35 + 4 * (flow_rate_l_min - 5)
+    return fio2_est
+
+def _to_fio2_nasocath(flow_rate_l_min):
+    """
+    Convert an O2 flow rate to an estimated FiO2 value for a nasopharyngeal
+    catheter.  Return FiO2 as a percentage.
+    """
+
+    fio2_est = EMPTY_FIELD
+    if flow_rate_l_min >= 4 and flow_rate_l_min <= 6:
+        return 40 + 10*(flow_rate_l_min - 4)
+    return fio2_est
+
+    
+# all device capture group names are keys
+# each is mapped to an FiO2 conversion fn taking O2 flow_rate as arg
+_DEVICE_MAP = {
+    'nc':_to_fio2_nc,
+    'nrb':_to_fio2_nrb,
+    'ra':None,
+    'venturi':_to_fio2_venturi,
+    'bvm':None,
+    'bipap':None,
+    'mask':_to_fio2_mask,
+    'air':None,
+    'nasocath':_to_fio2_nasocath
+}
+
+_str_device = r'\(?' +\
+    r'(' + _str_device_nc + r')'       + r'|' +\
+    r'(' + _str_device_nrb + r')'      + r'|' +\
+    r'(' + _str_device_ra + r')'       + r'|' +\
+    r'(' + _str_device_venturi + r')'  + r'|' +\
+    r'(' + _str_device_bvm + r')'      + r'|' +\
+    r'(' + _str_device_bipap + r')'    + r'|' +\
+    r'(' + _str_device_mask + r')'     + r'|' +\
+    r'(' + _str_device_air + r')'      + r'|' +\
+    r'(' + _str_device_nasocath + r')'        +\
+    r'\)?'
+
+# _str_device = r'\(?(nc|nrb|bvm|ra|fm|room air|air|nasal\s?cannula|'          +\
+#     r'cannula|non[-\s]?rebreather(\smask)?|[a-z\s]+[-\s]?mask|mask|'         +\
+#     r'vent(ilator)?|\d+%\s?[a-z]+[-\s]?mask|\d+%\s[a-z]+[-\s]?tent|'         +\
+#     r'bipap\s\d+/\d+\s?(with\s\d+L|\d+%))\)?'
 
 # finds "spo2: 98% on 2L NC" and similar
 _str_o2_1 = _str_o2_sat_hdr + r'(' + _str_connector + r')?' + _str_o2_val    +\
@@ -298,9 +404,31 @@ def _estimate_fio2(flow_rate, device):
     """
     Estimate the FiO2 value (fraction of inspired oxygen, as a percentage)
     from the given flow rate in L/min and device.
+
+    The device argument is encoded as follows: 'device_string|device_type',
+    where 'device_type' is a regex group name.
     """
 
-    pass
+    # caller should have checked this
+    assert device is not None
+
+    device_str, device_type = device.split('|')
+    if device_type not in _DEVICE_MAP:
+        return device_str, EMPTY_FIELD
+    
+    if flow_rate is None:
+        return device_str, EMPTY_FIELD
+    
+    fio2_est = EMPTY_FIELD
+    for dt in _DEVICE_MAP:
+        if dt == device_type:
+            # lookup a conversion function
+            conversion_fn = _DEVICE_MAP[dt]
+            if conversion_fn is not None:
+                fio2_est = conversion_fn(flow_rate)
+                break
+
+    return device_str, fio2_est
     
 
 ###############################################################################
@@ -309,6 +437,9 @@ def _estimate_pao2(spo2):
     Return a PaO2 estimate in mmHg from a given SpO2 percentage.
     The estimate is computed by linear piecewise approximation.
     """
+
+    if spo2 is None:
+        return EMPTY_FIELD
 
     p = None
     if spo2 >= 99:
@@ -464,19 +595,21 @@ def run(sentence):
                 o2_sat = value
             elif 'val2' == k:
                 value2 = float(v)
-            elif 'device' == k:
-                device = v
+            #elif 'device' == k:
+            #    device = v
             elif 'flow_rate' == k:
                 flow_rate = float(v)
+            elif k in _DEVICE_MAP:
+                device_type = k
+                device = '{0}|{1}'.format(v,k)
 
         # compute estimated PaO2 from SpO2
         if EMPTY_FIELD == pao2:
             pao2_est = _estimate_pao2(o2_sat)
 
         # compute estimated FiO2 from flow rate and device
-        if EMPTY_FIELD == fio2:
-            fio2_est = _estimate_fio2(flow_rate, device)
-        
+        if EMPTY_FIELD == fio2 and device is not None:
+            device, fio2_est = _estimate_fio2(flow_rate, device)
                 
         o2_tuple = O2Tuple(
             text = pc.match_text,
